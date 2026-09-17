@@ -63,7 +63,7 @@ final class LinkLookupTests: TerminalDelegate {
     @Test func testExplicitLinkMatchReportsRangesAcrossPiStyleReopen() throws {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 3))
         let url = "https://example.com/full/original"
-        let open = "\u{1b}]8;id=pi;\(url)\u{07}"
+        let open = "\u{1b}]8;;\(url)\u{07}"
         let close = "\u{1b}]8;;\u{07}"
         terminal.feed(text: "  \(open)abcdefghijklmno\(close)\r\n    \(open)pqrst\(close)")
 
@@ -98,12 +98,13 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(second.rowRanges == [.init(row: 1, range: 0..<6)])
     }
 
-    @Test func testExplicitLinkMatchDoesNotJoinLongAdjacentRowsWithoutIdentifier() throws {
+    @Test func testExplicitLinkMatchDoesNotJoinDifferentIdentifiers() throws {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 3))
         let url = "https://example.com/repeated"
-        let open = "\u{1b}]8;;\(url)\u{07}"
+        let firstOpen = "\u{1b}]8;id=first;\(url)\u{07}"
+        let secondOpen = "\u{1b}]8;id=second;\(url)\u{07}"
         let close = "\u{1b}]8;;\u{07}"
-        terminal.feed(text: "\(open)abcdefghijklmnopq\(close)\r\n\(open)second\(close)")
+        terminal.feed(text: "\(firstOpen)abcdefghijklmnopq\(close)\r\n\(secondOpen)second\(close)")
 
         let first = try #require(terminal.linkMatch(
             at: .buffer(Position(col: 8, row: 0)),

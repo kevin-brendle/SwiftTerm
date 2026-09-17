@@ -7264,20 +7264,6 @@ open class Terminal {
         return String(split[1])
     }
 
-    private func parseHyperlinkIdentifier(_ payload: String) -> Substring?
-    {
-        guard let separator = payload.firstIndex(of: ";") else {
-            return nil
-        }
-        for parameter in payload[..<separator].split(separator: ":") {
-            let pair = parameter.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            if pair.count == 2, pair[0] == "id", !pair[1].isEmpty {
-                return pair[1]
-            }
-        }
-        return nil
-    }
-
     private struct ExplicitLinkRowSegment: Equatable {
         let row: Int
         let range: Range<Int>
@@ -7426,10 +7412,7 @@ open class Terminal {
               ),
               upper.range.upperBound == upperInfo.lastCol + 1,
               lower.range.lowerBound == lowerInfo.firstCol,
-              upper.rawPayload == lower.rawPayload,
-              let upperIdentifier = parseHyperlinkIdentifier(upper.rawPayload),
-              let lowerIdentifier = parseHyperlinkIdentifier(lower.rawPayload),
-              upperIdentifier == lowerIdentifier
+              upper.rawPayload == lower.rawPayload
         else {
             return nil
         }
