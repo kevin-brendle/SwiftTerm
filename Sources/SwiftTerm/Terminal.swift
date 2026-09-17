@@ -7264,9 +7264,50 @@ open class Terminal {
         return String(split[1])
     }
 
+    private func parseHyperlinkIdentifier(_ payload: String) -> Substring?
+    {
+        guard let separator = payload.firstIndex(of: ";") else {
+            return nil
+        }
+        for parameter in payload[..<separator].split(separator: ":") {
+            let pair = parameter.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if pair.count == 2, pair[0] == "id", !pair[1].isEmpty {
+                return pair[1]
+            }
+        }
+        return nil
+    }
+
+    private struct ExplicitLinkRowSegment: Equatable {
+        let row: Int
+        let range: Range<Int>
+        let rawPayload: String
+    }
+
     private func explicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
     {
-        guard let payloadToken = payloadCode(at: position, in: buffer) else {
+        guard let segment = explicitLinkRowSegment(at: position, in: buffer),
+              let url = parseHyperlinkPayload(segment.rawPayload)
+        else {
+            return nil
+        }
+        let rowRanges = explicitLinkRowSegments(around: segment, in: buffer).map {
+            LinkMatch.RowRange(row: $0.row, range: $0.range)
+        }
+        return LinkMatch(
+            text: url,
+            row: position.row,
+            range: segment.range,
+            isExplicit: true,
+            rowRanges: rowRanges
+        )
+    }
+
+    private func explicitLinkRowSegment(at position: Position, in buffer: Buffer) -> ExplicitLinkRowSegment?
+    {
+        guard let payloadToken = payloadCode(at: position, in: buffer),
+              let rawPayload = rawHyperlinkPayload(at: position, in: buffer)
+        else {
             return nil
         }
         let line = buffer.lines[position.row]
@@ -7285,18 +7326,114 @@ open class Terminal {
         guard start < end else {
             return nil
         }
-        let rawPayload = line[position.col].getPayload() as? String
-            ?? line[max(0, position.col - 1)].getPayload() as? String
-        guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
+        return ExplicitLinkRowSegment(row: position.row, range: start..<end, rawPayload: rawPayload)
+    }
+
+    private func rawHyperlinkPayload(at position: Position, in buffer: Buffer) -> String?
+    {
+        guard position.row >= 0 && position.row < buffer.lines.count else {
             return nil
         }
-        return LinkMatch(
-            text: url,
-            row: position.row,
-            range: start..<end,
-            isExplicit: true,
-            rowRanges: [.init(row: position.row, range: start..<end)]
-        )
+        let line = buffer.lines[position.row]
+        let lineLimit = min(cols, line.count)
+        guard position.col >= 0 && position.col < lineLimit else {
+            return nil
+        }
+        let cell = line[position.col]
+        if cell.hasPayload {
+            return cell.getPayload() as? String
+        }
+        if cell.code == 0 && position.col > 0 && line[position.col - 1].width == 2 {
+            return line[position.col - 1].getPayload() as? String
+        }
+        return nil
+    }
+
+    private func explicitLinkRowSegments(
+        around segment: ExplicitLinkRowSegment,
+        in buffer: Buffer
+    ) -> [ExplicitLinkRowSegment] {
+        var segments: [ExplicitLinkRowSegment] = []
+        var first = segment
+
+        while first.row > 0,
+              let seam = explicitLinkSegmentsAcrossBoundary(
+                upperRow: first.row - 1,
+                lowerRow: first.row,
+                in: buffer
+              ),
+              seam.lower == first {
+            segments.append(seam.upper)
+            first = seam.upper
+        }
+
+        segments.reverse()
+        segments.append(segment)
+        var last = segment
+
+        while last.row + 1 < buffer.lines.count,
+              let seam = explicitLinkSegmentsAcrossBoundary(
+                upperRow: last.row,
+                lowerRow: last.row + 1,
+                in: buffer
+              ),
+              seam.upper == last {
+            segments.append(seam.lower)
+            last = seam.lower
+        }
+
+        return segments
+    }
+
+    private func explicitLinkSegmentsAcrossBoundary(
+        upperRow: Int,
+        lowerRow: Int,
+        in buffer: Buffer
+    ) -> (upper: ExplicitLinkRowSegment, lower: ExplicitLinkRowSegment)? {
+        guard upperRow >= 0, lowerRow == upperRow + 1, lowerRow < buffer.lines.count else {
+            return nil
+        }
+
+        if buffer.lines[lowerRow].isWrapped {
+            guard let upper = explicitLinkRowSegment(
+                    at: Position(col: min(cols, buffer.lines[upperRow].count) - 1, row: upperRow),
+                    in: buffer
+                  ),
+                  let lower = explicitLinkRowSegment(at: Position(col: 0, row: lowerRow), in: buffer),
+                  upper.range.upperBound == min(cols, buffer.lines[upperRow].count),
+                  lower.range.lowerBound == 0,
+                  upper.rawPayload == lower.rawPayload
+            else {
+                return nil
+            }
+            return (upper, lower)
+        }
+
+        guard let upperInfo = linkRowEdgeInfo(row: upperRow, in: buffer),
+              let lowerInfo = linkRowEdgeInfo(row: lowerRow, in: buffer)
+        else {
+            return nil
+        }
+        let continuationThreshold = max(0, cols - max(2, cols / 5))
+        guard upperInfo.lastCol >= continuationThreshold,
+              let upper = explicitLinkRowSegment(
+                at: Position(col: upperInfo.lastCol, row: upperRow),
+                in: buffer
+              ),
+              let lower = explicitLinkRowSegment(
+                at: Position(col: lowerInfo.firstCol, row: lowerRow),
+                in: buffer
+              ),
+              upper.range.upperBound == upperInfo.lastCol + 1,
+              lower.range.lowerBound == lowerInfo.firstCol,
+              upper.rawPayload == lower.rawPayload,
+              let upperIdentifier = parseHyperlinkIdentifier(upper.rawPayload),
+              let lowerIdentifier = parseHyperlinkIdentifier(lower.rawPayload),
+              upperIdentifier == lowerIdentifier
+        else {
+            return nil
+        }
+        return (upper, lower)
     }
 
     private func implicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?

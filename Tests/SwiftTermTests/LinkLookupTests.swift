@@ -42,6 +42,81 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(link == "https://example.com")
     }
 
+    @Test func testExplicitLinkMatchReportsRangesAcrossNaturalWrap() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 8, rows: 4))
+        let url = "https://example.com/full/original"
+        terminal.feed(text: "\u{1b}]8;id=pi;\(url)\u{07}abcdefghijklmnopqrst\u{1b}]8;;\u{07}")
+
+        let expectedRanges = [
+            Terminal.LinkMatch.RowRange(row: 0, range: 0..<8),
+            Terminal.LinkMatch.RowRange(row: 1, range: 0..<8),
+            Terminal.LinkMatch.RowRange(row: 2, range: 0..<4),
+        ]
+        for position in [Position(col: 2, row: 0), Position(col: 3, row: 1), Position(col: 1, row: 2)] {
+            let match = try #require(terminal.linkMatch(at: .buffer(position), mode: .explicitOnly))
+            #expect(match.text == url)
+            #expect(match.rowRanges == expectedRanges)
+            #expect(terminal.link(at: .buffer(position), mode: .explicitOnly) == url)
+        }
+    }
+
+    @Test func testExplicitLinkMatchReportsRangesAcrossPiStyleReopen() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 3))
+        let url = "https://example.com/full/original"
+        let open = "\u{1b}]8;id=pi;\(url)\u{07}"
+        let close = "\u{1b}]8;;\u{07}"
+        terminal.feed(text: "  \(open)abcdefghijklmno\(close)\r\n    \(open)pqrst\(close)")
+
+        let expectedRanges = [
+            Terminal.LinkMatch.RowRange(row: 0, range: 2..<17),
+            Terminal.LinkMatch.RowRange(row: 1, range: 4..<9),
+        ]
+        for position in [Position(col: 8, row: 0), Position(col: 6, row: 1)] {
+            let match = try #require(terminal.linkMatch(at: .buffer(position), mode: .explicitOnly))
+            #expect(match.text == url)
+            #expect(match.rowRanges == expectedRanges)
+            #expect(terminal.link(at: .buffer(position), mode: .explicitOnly) == url)
+        }
+    }
+
+    @Test func testExplicitLinkMatchDoesNotJoinOrdinaryAdjacentRows() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 3))
+        let url = "https://example.com/repeated"
+        let open = "\u{1b}]8;;\(url)\u{07}"
+        let close = "\u{1b}]8;;\u{07}"
+        terminal.feed(text: "\(open)first\(close)\r\n\(open)second\(close)")
+
+        let first = try #require(terminal.linkMatch(
+            at: .buffer(Position(col: 2, row: 0)),
+            mode: .explicitOnly
+        ))
+        let second = try #require(terminal.linkMatch(
+            at: .buffer(Position(col: 2, row: 1)),
+            mode: .explicitOnly
+        ))
+        #expect(first.rowRanges == [.init(row: 0, range: 0..<5)])
+        #expect(second.rowRanges == [.init(row: 1, range: 0..<6)])
+    }
+
+    @Test func testExplicitLinkMatchDoesNotJoinLongAdjacentRowsWithoutIdentifier() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 3))
+        let url = "https://example.com/repeated"
+        let open = "\u{1b}]8;;\(url)\u{07}"
+        let close = "\u{1b}]8;;\u{07}"
+        terminal.feed(text: "\(open)abcdefghijklmnopq\(close)\r\n\(open)second\(close)")
+
+        let first = try #require(terminal.linkMatch(
+            at: .buffer(Position(col: 8, row: 0)),
+            mode: .explicitOnly
+        ))
+        let second = try #require(terminal.linkMatch(
+            at: .buffer(Position(col: 2, row: 1)),
+            mode: .explicitOnly
+        ))
+        #expect(first.rowRanges == [.init(row: 0, range: 0..<17)])
+        #expect(second.rowRanges == [.init(row: 1, range: 0..<6)])
+    }
+
     @Test func testGarbageCollectionDoesNotReleaseAnotherTerminalsPayload() {
         let first = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
         let second = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
